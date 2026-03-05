@@ -1973,6 +1973,17 @@ renderer.domElement.addEventListener('contextmenu', (e) => {
 
 /* ───────── lighting slider controls ───────── */
 const torchBaseIntensity = { value: 2.8 };
+const LIGHT_STORAGE_KEY = 'hnefatafl-lighting';
+
+function saveLightSettings() {
+  const data = {};
+  for (const id of ['sl-ambient','sl-dir','sl-fill','sl-torch','sl-exposure','sl-fog']) {
+    const sl = document.getElementById(id);
+    if (sl) data[id] = sl.value;
+  }
+  localStorage.setItem(LIGHT_STORAGE_KEY, JSON.stringify(data));
+}
+
 function setupSlider(id, valId, callback) {
   const sl = document.getElementById(id);
   const sv = document.getElementById(valId);
@@ -1981,6 +1992,7 @@ function setupSlider(id, valId, callback) {
     const v = parseFloat(sl.value) / 100;
     sv.textContent = v.toFixed(v < 1 ? 2 : 1);
     callback(v);
+    saveLightSettings();
   });
 }
 setupSlider('sl-ambient', 'sv-ambient', v => { amb.intensity = v; });
@@ -1989,6 +2001,17 @@ setupSlider('sl-fill', 'sv-fill', v => { fill.intensity = v; });
 setupSlider('sl-torch', 'sv-torch', v => { torchBaseIntensity.value = v; });
 setupSlider('sl-exposure', 'sv-exposure', v => { renderer.toneMappingExposure = v; });
 setupSlider('sl-fog', 'sv-fog', v => { scene.fog.density = v / 10; });
+
+/* Restore saved lighting settings */
+try {
+  const saved = JSON.parse(localStorage.getItem(LIGHT_STORAGE_KEY));
+  if (saved) {
+    for (const [id, val] of Object.entries(saved)) {
+      const sl = document.getElementById(id);
+      if (sl) { sl.value = val; sl.dispatchEvent(new Event('input')); }
+    }
+  }
+} catch(e) {}
 
 /* ───────── floating dust particles ───────── */
 const dustCount = 60;
