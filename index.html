@@ -152,6 +152,28 @@
     cursor: pointer;
   }
   #light-panel .val { min-width: 30px; text-align: right; color: #7878a0; font-size: 11px; }
+
+  #bot-btn {
+    position: absolute; bottom: 18px; left: 118px; pointer-events: all;
+    cursor: pointer; padding: 10px 22px; border-radius: 2px;
+    border: 1px solid rgba(80,80,100,.35);
+    background: rgba(12,12,18,.85); color: #8888a0;
+    font-size: 13px; font-family: 'Cinzel', serif;
+    letter-spacing: 1px; z-index: 50;
+  }
+  #bot-btn:hover { background: rgba(20,20,30,.9); box-shadow: 0 0 15px rgba(80,80,120,.2); }
+  #bot-btn.active { color: #88bbdd; border-color: rgba(100,140,180,.5); }
+  #bot-panel {
+    display: none; position: absolute; bottom: 60px; left: 118px;
+    background: rgba(10,10,16,.92); border: 1px solid rgba(80,80,100,.35);
+    border-radius: 4px; padding: 16px 20px; pointer-events: all;
+    min-width: 200px; z-index: 50;
+    font-family: 'Cinzel', serif; color: #9898a8; font-size: 12px;
+  }
+  #bot-panel.show { display: block; }
+  #bot-panel h3 { margin: 0 0 12px 0; font-size: 14px; color: #b0b0c8; letter-spacing: 2px; text-transform: uppercase; }
+  #bot-panel label { display: block; margin-bottom: 8px; cursor: pointer; font-size: 12px; }
+  #bot-panel input[type="radio"] { accent-color: #6688aa; margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -186,14 +208,22 @@
 
 <button id="help-btn" onclick="document.getElementById('help-panel').classList.toggle('show')">Rules</button>
 
+<button id="bot-btn" onclick="document.getElementById('bot-panel').classList.toggle('show')">Bot</button>
+<div id="bot-panel">
+  <h3>Bot Opponent</h3>
+  <label><input type="radio" name="bot-mode" value="off" checked onchange="setBotMode(this.value)"> Off — vs Human</label>
+  <label><input type="radio" name="bot-mode" value="dark" onchange="setBotMode(this.value)"> Bot plays Dark Side</label>
+  <label><input type="radio" name="bot-mode" value="light" onchange="setBotMode(this.value)"> Bot plays Light Side</label>
+</div>
+
 <button id="light-btn" onclick="document.getElementById('light-panel').classList.toggle('show')">Lighting</button>
 <div id="light-panel">
   <h3>Lighting</h3>
   <label><span>Ambient</span><input type="range" id="sl-ambient" min="0" max="200" value="60"><span class="val" id="sv-ambient">0.6</span></label>
-  <label><span>Moonlight</span><input type="range" id="sl-dir" min="0" max="400" value="180"><span class="val" id="sv-dir">1.8</span></label>
+  <label><span>Moonlight</span><input type="range" id="sl-dir" min="0" max="400" value="320"><span class="val" id="sv-dir">3.2</span></label>
   <label><span>Fill</span><input type="range" id="sl-fill" min="0" max="200" value="40"><span class="val" id="sv-fill">0.4</span></label>
-  <label><span>Torches</span><input type="range" id="sl-torch" min="0" max="500" value="280"><span class="val" id="sv-torch">2.8</span></label>
-  <label><span>Exposure</span><input type="range" id="sl-exposure" min="20" max="300" value="110"><span class="val" id="sv-exposure">1.1</span></label>
+  <label><span>Torches</span><input type="range" id="sl-torch" min="0" max="500" value="320"><span class="val" id="sv-torch">3.2</span></label>
+  <label><span>Exposure</span><input type="range" id="sl-exposure" min="20" max="300" value="240"><span class="val" id="sv-exposure">2.4</span></label>
   <label><span>Fog</span><input type="range" id="sl-fog" min="0" max="100" value="35"><span class="val" id="sv-fog">0.035</span></label>
 </div>
 
@@ -1054,6 +1084,26 @@ let selectedPiece = null;
 let validMoves = [];
 let gameOver = false;
 let animating = false;
+let botEnabled = false;
+let botSide = ATTACKER;
+
+function setBotMode(val) {
+  const btn = document.getElementById('bot-btn');
+  if (val === 'off') {
+    botEnabled = false;
+    btn.classList.remove('active');
+  } else {
+    botEnabled = true;
+    botSide = val === 'dark' ? ATTACKER : DEFENDER;
+    btn.classList.add('active');
+    /* If it's now the bot's turn, trigger it */
+    if (!gameOver && !animating && getSide(turn) === getSide(botSide)) {
+      setTimeout(() => doBotMove(), 500);
+    }
+  }
+}
+/* expose to inline onclick */
+window.setBotMode = setBotMode;
 
 const bannerEl = document.getElementById('turn-banner');
 const msgEl = document.getElementById('message-box');
@@ -1641,6 +1691,171 @@ function endGame(title, desc) {
   document.getElementById('win-screen').classList.add('show');
 }
 
+/* ───────── bot AI ───────── */
+
+/* Dry-run capture count: temporarily place piece, count captures, undo */
+function simulateCaptures(type, fromR, fromC, toR, toC) {
+  const origFrom = grid[fromR][fromC];
+  const origTo = grid[toR][toC];
+  grid[fromR][fromC] = 0;
+  grid[toR][toC] = type;
+
+  const side = getSide(type);
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  let count = 0;
+
+  for (const [dr,dc] of dirs) {
+    const nr = toR+dr, nc = toC+dc;
+    if (nr<0||nr>=SZ||nc<0||nc>=SZ) continue;
+    const target = grid[nr][nc];
+    if (!target || getSide(target)===side || target===KING) continue;
+    const br = nr+dr, bc = nc+dc;
+    if (isHostileSquare(br, bc, target)) count++;
+  }
+
+  /* Restore grid */
+  grid[fromR][fromC] = origFrom;
+  grid[toR][toC] = origTo;
+  return count;
+}
+
+/* Check if moving to (r,c) would put the king in danger of capture (for defender bot) */
+function kingDistToCorner() {
+  const king = Object.values(pieces3D).find(p => p.type === KING);
+  if (!king) return 99;
+  let minDist = 99;
+  for (const [cr,cc] of CORNERS) {
+    minDist = Math.min(minDist, Math.abs(king.row-cr) + Math.abs(king.col-cc));
+  }
+  return minDist;
+}
+
+function scoreBotMove(piece, toR, toC) {
+  let score = 0;
+  const type = piece.type;
+
+  /* Captures are very attractive */
+  const caps = simulateCaptures(type, piece.row, piece.col, toR, toC);
+  score += caps * 10;
+
+  if (getSide(botSide) === ATTACKER) {
+    /* Attacker heuristics */
+    const king = Object.values(pieces3D).find(p => p.type === KING);
+    if (king) {
+      /* Move closer to king */
+      const oldDist = Math.abs(piece.row - king.row) + Math.abs(piece.col - king.col);
+      const newDist = Math.abs(toR - king.row) + Math.abs(toC - king.col);
+      if (newDist < oldDist) score += 3;
+
+      /* Block king's path to corners */
+      for (const [cr,cc] of CORNERS) {
+        if ((toR===king.row && ((toC>king.col&&toC<=cc)||(toC<king.col&&toC>=cc))) ||
+            (toC===king.col && ((toR>king.row&&toR<=cr)||(toR<king.row&&toR>=cr)))) {
+          score += 2;
+        }
+      }
+
+      /* Adjacent to king is great */
+      if (Math.abs(toR-king.row)+Math.abs(toC-king.col)===1) score += 4;
+    }
+  } else {
+    /* Defender heuristics */
+    if (type === KING) {
+      /* King: move toward nearest corner */
+      let bestCornerDist = 99;
+      for (const [cr,cc] of CORNERS) {
+        bestCornerDist = Math.min(bestCornerDist, Math.abs(toR-cr)+Math.abs(toC-cc));
+      }
+      let oldBestDist = 99;
+      for (const [cr,cc] of CORNERS) {
+        oldBestDist = Math.min(oldBestDist, Math.abs(piece.row-cr)+Math.abs(piece.col-cc));
+      }
+      if (bestCornerDist < oldBestDist) score += 5;
+      /* Corner win! */
+      if (isCorner(toR, toC)) score += 100;
+      /* Edge is good for king */
+      if (toR===0||toR===SZ-1||toC===0||toC===SZ-1) score += 2;
+    } else {
+      /* Defenders: protect king, stay central */
+      const king = Object.values(pieces3D).find(p => p.type === KING);
+      if (king) {
+        const oldDist = Math.abs(piece.row-king.row)+Math.abs(piece.col-king.col);
+        const newDist = Math.abs(toR-king.row)+Math.abs(toC-king.col);
+        if (newDist < oldDist && newDist <= 3) score += 2;
+      }
+    }
+  }
+
+  /* Random jitter for easy difficulty — makes bot imperfect */
+  score += Math.random() * 3;
+
+  return score;
+}
+
+async function doBotMove() {
+  if (gameOver || animating || !botEnabled) return;
+  if (getSide(turn) !== getSide(botSide)) return;
+
+  animating = true;
+
+  /* Gather all legal moves */
+  const allMoves = [];
+  for (const p of Object.values(pieces3D)) {
+    if (getSide(p.type) !== getSide(botSide)) continue;
+    const moves = getValidMoves(p.row, p.col);
+    for (const [mr,mc] of moves) {
+      allMoves.push({ piece: p, row: mr, col: mc, score: scoreBotMove(p, mr, mc) });
+    }
+  }
+
+  if (allMoves.length === 0) {
+    animating = false;
+    return;
+  }
+
+  /* Sort by score descending, pick randomly from top 3 */
+  allMoves.sort((a,b) => b.score - a.score);
+  const topN = Math.min(3, allMoves.length);
+  const pick = allMoves[Math.floor(Math.random() * topN)];
+
+  const piece = pick.piece;
+  const row = pick.row, col = pick.col;
+  const oldR = piece.row, oldC = piece.col;
+
+  grid[oldR][oldC] = 0;
+  grid[row][col] = piece.type;
+  piece.row = row;
+  piece.col = col;
+
+  await animateMove(piece, row, col);
+  const captureCount = await processCaptures(piece.type, row, col);
+  if (captureCount > 0) showMsg(`${captureCount} piece${captureCount>1?'s':''} destroyed!`);
+
+  if (!checkWin(piece.type, row, col)) {
+    turn = turn === ATTACKER ? DEFENDER : ATTACKER;
+    updateBanner();
+
+    let hasMove = false;
+    for (const p of Object.values(pieces3D)) {
+      if (getSide(p.type) === getSide(turn) && getValidMoves(p.row, p.col).length > 0) {
+        hasMove = true; break;
+      }
+    }
+    if (!hasMove) {
+      turn = turn === ATTACKER ? DEFENDER : ATTACKER;
+      updateBanner();
+      showMsg('No valid moves \u2014 turn passed!', 2500);
+    }
+  }
+
+  animating = false;
+
+  /* If it's still the bot's turn (e.g. opponent had no moves), go again */
+  if (!gameOver && botEnabled && getSide(turn) === getSide(botSide)) {
+    setTimeout(() => doBotMove(), 500);
+  }
+}
+
 /* ───────── raycasting & interaction ───────── */
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -1673,6 +1888,7 @@ function getClickTarget(event) {
 
 renderer.domElement.addEventListener('click', async (e) => {
   if (gameOver || animating) return;
+  if (botEnabled && getSide(turn) === getSide(botSide)) return; /* bot's turn */
   const target = getClickTarget(e);
   if (!target) return;
 
@@ -1729,6 +1945,11 @@ renderer.domElement.addEventListener('click', async (e) => {
       }
     }
     animating = false;
+
+    /* Trigger bot if it's now the bot's turn */
+    if (!gameOver && botEnabled && getSide(turn) === getSide(botSide)) {
+      setTimeout(() => doBotMove(), 500);
+    }
     return;
   }
 
